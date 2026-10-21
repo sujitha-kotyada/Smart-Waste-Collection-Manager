@@ -1,0 +1,18 @@
+{
+  "firestore": {
+    "rules": "firestore.rules",
+    "indexes": "firestore.indexes.json"
+  },
+  "flutter": {
+    "platforms": {
+      "dart": {
+        "lib/firebase_options.dart": {
+          "projectId": "smart-waste-collection-manager",
+          "configurations": {
+            "web": "1:739741914803:web:6c9487acb2038cb27bc2c6"
+          }
+        }
+      }
+    }
+  }
+}

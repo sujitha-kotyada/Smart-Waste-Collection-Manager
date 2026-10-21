@@ -1,0 +1,303 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Helper functions
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    // Role verification from custom claims (tamper-proof) OR protected /users/{uid} doc
+    function hasRole(roleName) {
+      return isAuthenticated() && (
+        ('role' in request.auth.token && request.auth.token.role == roleName) ||
+        (roleName == 'admin' && 'admin' in request.auth.token && request.auth.token.admin == true) ||
+        (roleName == 'worker' && 'worker' in request.auth.token && request.auth.token.worker == true) ||
+        (
+          exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+          'role' in get(/databases/$(database)/documents/users/$(request.auth.uid)).data &&
+          get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == roleName
+        )
+      );
+    }
+
+    function isAdmin() {
+      return hasRole('admin');
+    }
+
+    function isWorker() {
+      return hasRole('worker');
+    }
+
+    // Valid waste categories
+    function isValidCategory(cat) {
+      return cat in [
+        'Household Waste',
+        'Plastic Waste',
+        'Organic Waste',
+        'Paper & Cardboard',
+        'E-Waste',
+        'Hazardous Waste',
+        'Construction Debris',
+        'Overflowing Bin',
+        'Other'
+      ];
+    }
+
+    // Valid priorities
+    function isValidPriority(pri) {
+      return pri in ['Low', 'Medium', 'High', 'Urgent'];
+    }
+
+    // Valid report statuses
+    function isValidStatus(st) {
+      return st in ['Pending', 'Assigned', 'In Progress', 'Completed', 'Rejected'];
+    }
+
+    // Allowed keys for report documents
+    function isAllowedReportKeys(keys) {
+      return keys.hasOnly([
+        'id',
+        'reporterId',
+        'reporterName',
+        'wasteCategory',
+        'location',
+        'description',
+        'priority',
+        'status',
+        'assignedWorkerId',
+        'assignedWorkerName',
+        'resolutionNotes',
+        'createdAt',
+        'updatedAt'
+      ]);
+    }
+
+    // Required core keys for report documents
+    function hasRequiredReportKeys(keys) {
+      return keys.hasAll([
+        'id',
+        'reporterId',
+        'reporterName',
+        'wasteCategory',
+        'location',
+        'description',
+        'priority',
+        'status',
+        'createdAt',
+        'updatedAt'
+      ]);
+    }
+
+    // ==========================================
+    // 1. Users Collection (/users/{userId})
+    // ==========================================
+    match /users/{userId} {
+      // Any authenticated user can read profiles (needed for worker assignment display)
+      allow read: if isAuthenticated();
+
+      // Users can only create their own user document, strictly defaulting to 'resident'
+      // Strictly enforces allowed keys, required types, and uid match
+      allow create: if isOwner(userId) &&
+        request.resource.data.keys().hasAll(['uid', 'email', 'role', 'createdAt']) &&
+        request.resource.data.keys().hasOnly(['uid', 'email', 'displayName', 'role', 'createdAt']) &&
+        request.resource.data.uid == userId &&
+        request.resource.data.role == 'resident' &&
+        request.resource.data.email is string &&
+        (!('displayName' in request.resource.data) || request.resource.data.displayName is string);
+
+      // Users CANNOT elevate their role or alter immutable identity (uid, createdAt, email, role)
+      // Users can only update their own displayName
+      allow update: if isOwner(userId) &&
+        request.resource.data.uid == resource.data.uid &&
+        request.resource.data.uid == userId &&
+        request.resource.data.createdAt == resource.data.createdAt &&
+        request.resource.data.role == resource.data.role &&
+        request.resource.data.email == resource.data.email &&
+        request.resource.data.keys().hasOnly(['uid', 'email', 'displayName', 'role', 'createdAt']) &&
+        (!('displayName' in request.resource.data) || request.resource.data.displayName is string);
+
+      // Administrators can update roles, but identity (uid, createdAt, email) remains protected
+      // (Initial admin is provisioned via Firebase Admin SDK / Console)
+      allow update: if isAdmin() &&
+        request.resource.data.uid == resource.data.uid &&
+        request.resource.data.uid == userId &&
+        request.resource.data.createdAt == resource.data.createdAt &&
+        request.resource.data.email == resource.data.email &&
+        request.resource.data.keys().hasOnly(['uid', 'email', 'displayName', 'role', 'createdAt']) &&
+        request.resource.data.role in ['resident', 'worker', 'admin'];
+
+      allow delete: if isAdmin();
+    }
+
+    // ==========================================
+    // 2. Reports Collection (/reports/{reportId})
+    // ==========================================
+    match /reports/{reportId} {
+      // Read access:
+      // - Admins read all reports
+      // - Residents read only reports they created
+      // - Workers read only reports assigned to them
+      allow read: if isAuthenticated() && (
+        isAdmin() ||
+        resource.data.reporterId == request.auth.uid ||
+        (isWorker() && resource.data.assignedWorkerId == request.auth.uid)
+      );
+
+      // Create access:
+      // - Only authenticated users
+      // - Must own the report (reporterId == request.auth.uid)
+      // - Document id must match report id field
+      // - Initial status must strictly be 'Pending'
+      // - Must NOT assign a worker or inject notes at creation
+      // - Must contain valid category, priority, and location
+      allow create: if isAuthenticated() &&
+        request.resource.data.reporterId == request.auth.uid &&
+        request.resource.data.id == reportId &&
+        request.resource.data.status == 'Pending' &&
+        hasRequiredReportKeys(request.resource.data.keys()) &&
+        isAllowedReportKeys(request.resource.data.keys()) &&
+        isValidCategory(request.resource.data.wasteCategory) &&
+        isValidPriority(request.resource.data.priority) &&
+        request.resource.data.id is string &&
+        request.resource.data.reporterName is string &&
+        request.resource.data.description is string &&
+        request.resource.data.location is string &&
+        request.resource.data.location.size() >= 3 &&
+        (!('assignedWorkerId' in request.resource.data) || request.resource.data.assignedWorkerId == null) &&
+        (!('assignedWorkerName' in request.resource.data) || request.resource.data.assignedWorkerName == null) &&
+        (!('resolutionNotes' in request.resource.data) || request.resource.data.resolutionNotes == null);
+
+      // Update access:
+      allow update: if isAuthenticated() && (
+        // A. Administrators have operational authority, but must validate structure, ID consistency, and immutability
+        (
+          isAdmin() &&
+          request.resource.data.id == resource.data.id &&
+          request.resource.data.id == reportId &&
+          request.resource.data.reporterId == resource.data.reporterId &&
+          request.resource.data.createdAt == resource.data.createdAt &&
+          isAllowedReportKeys(request.resource.data.keys()) &&
+          hasRequiredReportKeys(request.resource.data.keys()) &&
+          isValidStatus(request.resource.data.status) &&
+          isValidCategory(request.resource.data.wasteCategory) &&
+          isValidPriority(request.resource.data.priority) &&
+          request.resource.data.location is string &&
+          request.resource.data.location.size() >= 3 &&
+          request.resource.data.description is string &&
+          (
+            // If status is Assigned or In Progress, worker assignment should be present and valid
+            (
+              request.resource.data.status in ['Assigned', 'In Progress'] &&
+              request.resource.data.assignedWorkerId is string &&
+              request.resource.data.assignedWorkerId.size() > 0
+            ) ||
+            // If status is Pending, worker assignment should be null or not set
+            (
+              request.resource.data.status == 'Pending' &&
+              (!('assignedWorkerId' in request.resource.data) || request.resource.data.assignedWorkerId == null)
+            ) ||
+            // Completed or Rejected status
+            (
+              request.resource.data.status in ['Completed', 'Rejected'] &&
+              (!('assignedWorkerId' in request.resource.data) || request.resource.data.assignedWorkerId == null || request.resource.data.assignedWorkerId is string)
+            )
+          )
+        ) ||
+
+        // B. Assigned Workers:
+        // - Must be assigned to this report
+        // - Cannot alter incident facts (id, reporterId, reporterName, wasteCategory, location,
+        //   description, priority, createdAt, assignedWorkerId, assignedWorkerName are IMMUTABLE)
+        // - Workers can ONLY change fields required for status progression and resolution notes:
+        //   diff().affectedKeys() must strictly be a subset of ['status', 'resolutionNotes', 'updatedAt']
+        // - Resolution note and transition constraints:
+        //   1. Assigned -> In Progress: cannot introduce resolutionNotes (must remain null)
+        //   2. In Progress -> Completed: requires non-empty resolutionNotes string
+        //   3. Completed report: resolutionNotes cannot be altered or cleared
+        //   4. Idempotent In Progress: resolutionNotes cannot be introduced
+        (
+          isWorker() &&
+          resource.data.assignedWorkerId == request.auth.uid &&
+          request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'resolutionNotes', 'updatedAt']) &&
+          request.resource.data.id == resource.data.id &&
+          request.resource.data.id == reportId &&
+          request.resource.data.reporterId == resource.data.reporterId &&
+          request.resource.data.wasteCategory == resource.data.wasteCategory &&
+          request.resource.data.location == resource.data.location &&
+          request.resource.data.description == resource.data.description &&
+          request.resource.data.priority == resource.data.priority &&
+          request.resource.data.createdAt == resource.data.createdAt &&
+          request.resource.data.assignedWorkerId == resource.data.assignedWorkerId &&
+          (
+            // Transition 1: Assigned -> In Progress (cannot add completion notes)
+            (
+              resource.data.status == 'Assigned' &&
+              request.resource.data.status == 'In Progress' &&
+              (!('resolutionNotes' in request.resource.data) || request.resource.data.resolutionNotes == null)
+            ) ||
+            // Transition 2: In Progress -> Completed (requires non-empty completion notes)
+            (
+              resource.data.status == 'In Progress' &&
+              request.resource.data.status == 'Completed' &&
+              'resolutionNotes' in request.resource.data &&
+              request.resource.data.resolutionNotes is string &&
+              request.resource.data.resolutionNotes.size() > 0
+            ) ||
+            // Transition 3: Idempotent status update (e.g. updating updatedAt only)
+            (
+              resource.data.status == request.resource.data.status &&
+              (
+                // In Assigned or In Progress: notes must remain null
+                (
+                  (resource.data.status == 'Assigned' || resource.data.status == 'In Progress') &&
+                  (!('resolutionNotes' in request.resource.data) || request.resource.data.resolutionNotes == null)
+                ) ||
+                // In Completed: notes cannot be changed or cleared
+                (
+                  resource.data.status == 'Completed' &&
+                  'resolutionNotes' in request.resource.data &&
+                  'resolutionNotes' in resource.data &&
+                  request.resource.data.resolutionNotes == resource.data.resolutionNotes &&
+                  resource.data.resolutionNotes is string &&
+                  resource.data.resolutionNotes.size() > 0
+                )
+              )
+            )
+          )
+        ) ||
+
+        // C. Residents:
+        // - Can only modify while status is Pending
+        // - Cannot reassign, self-complete, or inject resolution notes
+        // - id, reporterId, createdAt, status are IMMUTABLE
+        // - Can only modify incident content fields: wasteCategory, location, description, priority, updatedAt
+        (
+          resource.data.reporterId == request.auth.uid &&
+          resource.data.status == 'Pending' &&
+          request.resource.data.id == resource.data.id &&
+          request.resource.data.id == reportId &&
+          request.resource.data.diff(resource.data).affectedKeys().hasOnly(['wasteCategory', 'location', 'description', 'priority', 'updatedAt']) &&
+          request.resource.data.reporterId == resource.data.reporterId &&
+          request.resource.data.createdAt == resource.data.createdAt &&
+          request.resource.data.status == 'Pending' &&
+          isValidCategory(request.resource.data.wasteCategory) &&
+          isValidPriority(request.resource.data.priority) &&
+          request.resource.data.location is string &&
+          request.resource.data.location.size() >= 3 &&
+          request.resource.data.description is string &&
+          (!('assignedWorkerId' in request.resource.data) || request.resource.data.assignedWorkerId == null) &&
+          (!('resolutionNotes' in request.resource.data) || request.resource.data.resolutionNotes == null)
+        )
+      );
+
+      // Deletion:
+      // Strictly administrators only
+      allow delete: if isAdmin();
+    }
+  }
+}
