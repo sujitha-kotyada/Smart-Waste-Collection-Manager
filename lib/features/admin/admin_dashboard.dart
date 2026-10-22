@@ -23,99 +23,20 @@ class AdminDashboard extends StatefulWidget {
 class _AdminDashboardState extends State<AdminDashboard> {
   String _selectedFilter = 'All';
 
-  // Registered municipal field personnel available for assignment
-  final List<Map<String, String>> _availableWorkers = [
-    {'id': 'demo-worker-1', 'name': 'Rajesh Kumar (Electric Truck #04)'},
-    {'id': 'worker-priya-2', 'name': 'Priya Sharma (Segregation Van #02)'},
-    {
-      'id': 'worker-vikram-3',
-      'name': 'Vikram Singh (Hazardous Waste Unit #01)',
-    },
-    {'id': 'worker-amit-4', 'name': 'Amit Verma (Rapid Response Trike #08)'},
-  ];
-
   Future<void> _openAssignDialog(WasteReport report) async {
-    String selectedWorkerId = _availableWorkers.first['id']!;
-
-    final confirmed = await showDialog<bool>(
+    final selectedWorker = await showDialog<AppUser>(
       context: context,
-      builder: (ctx) {
-        return StatefulBuilder(
-          builder: (context, setDialogState) {
-            return AlertDialog(
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(16),
-              ),
-              title: const Text('Dispatch Field Crew'),
-              content: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    'Report #${report.id} • ${report.wasteCategory}',
-                    style: const TextStyle(fontWeight: FontWeight.bold),
-                  ),
-                  const SizedBox(height: 6),
-                  Text(
-                    'Location: ${report.location}',
-                    style: const TextStyle(fontSize: 12, color: Colors.black54),
-                  ),
-                  const SizedBox(height: 16),
-                  const Text(
-                    'Select Assigned Worker / Vehicle Crew *',
-                    style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
-                  ),
-                  const SizedBox(height: 8),
-                  DropdownButtonFormField<String>(
-                    initialValue: selectedWorkerId,
-                    decoration: const InputDecoration(
-                      prefixIcon: Icon(Icons.person_pin_outlined),
-                      contentPadding: EdgeInsets.symmetric(
-                        horizontal: 12,
-                        vertical: 10,
-                      ),
-                    ),
-                    items: _availableWorkers.map((w) {
-                      return DropdownMenuItem(
-                        value: w['id'],
-                        child: Text(
-                          w['name']!,
-                          style: const TextStyle(fontSize: 13),
-                        ),
-                      );
-                    }).toList(),
-                    onChanged: (val) {
-                      if (val != null) {
-                        setDialogState(() => selectedWorkerId = val);
-                      }
-                    },
-                  ),
-                ],
-              ),
-              actions: [
-                TextButton(
-                  onPressed: () => Navigator.pop(ctx, false),
-                  child: const Text('Cancel'),
-                ),
-                ElevatedButton(
-                  onPressed: () => Navigator.pop(ctx, true),
-                  child: const Text('Confirm Dispatch'),
-                ),
-              ],
-            );
-          },
-        );
-      },
+      builder: (ctx) => _AssignWorkerDialog(
+        report: report,
+        repository: widget.repository,
+      ),
     );
 
-    if (confirmed == true) {
-      final workerObj = _availableWorkers.firstWhere(
-        (w) => w['id'] == selectedWorkerId,
-      );
+    if (selectedWorker != null) {
       final updated = report.copyWith(
         status: AppConstants.statusAssigned,
-        assignedWorkerId: workerObj['id'],
-        assignedWorkerName: workerObj['name'],
+        assignedWorkerId: selectedWorker.uid,
+        assignedWorkerName: selectedWorker.displayName,
         updatedAt: DateTime.now(),
       );
 
@@ -129,8 +50,8 @@ class _AdminDashboardState extends State<AdminDashboard> {
               backgroundColor: const Color(0xFF1976D2),
               content: Text(
                 isCloud
-                    ? 'Report #${report.id} assigned to ${workerObj['name']} in Cloud Firestore'
-                    : '[Demo Sandbox] Report #${report.id} assigned to ${workerObj['name']}',
+                    ? 'Report #${report.id} assigned to ${selectedWorker.displayName} in Cloud Firestore'
+                    : '[Demo Sandbox] Report #${report.id} assigned to ${selectedWorker.displayName}',
               ),
             ),
           );
@@ -635,6 +556,252 @@ class _AdminDashboardState extends State<AdminDashboard> {
           ],
         ),
       ),
+    );
+  }
+}
+
+class _AssignWorkerDialog extends StatefulWidget {
+  final WasteReport report;
+  final WasteReportRepository repository;
+
+  const _AssignWorkerDialog({
+    required this.report,
+    required this.repository,
+  });
+
+  @override
+  State<_AssignWorkerDialog> createState() => _AssignWorkerDialogState();
+}
+
+class _AssignWorkerDialogState extends State<_AssignWorkerDialog> {
+  bool _isLoading = true;
+  String? _errorMessage;
+  List<AppUser> _workers = [];
+  String? _selectedWorkerId;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadWorkers();
+  }
+
+  Future<void> _loadWorkers() async {
+    setState(() {
+      _isLoading = true;
+      _errorMessage = null;
+    });
+
+    try {
+      final list = await widget.repository.getAvailableWorkers();
+      if (!mounted) return;
+      setState(() {
+        _workers = list;
+        _isLoading = false;
+        if (list.isNotEmpty) {
+          if (widget.report.assignedWorkerId != null &&
+              list.any((w) => w.uid == widget.report.assignedWorkerId)) {
+            _selectedWorkerId = widget.report.assignedWorkerId;
+          } else {
+            _selectedWorkerId = list.first.uid;
+          }
+        } else {
+          _selectedWorkerId = null;
+        }
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _errorMessage = e.toString();
+        _isLoading = false;
+        _selectedWorkerId = null;
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(16),
+      ),
+      title: const Text('Dispatch Field Crew'),
+      content: SingleChildScrollView(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Report #${widget.report.id} - ${widget.report.wasteCategory}',
+              style: const TextStyle(fontWeight: FontWeight.bold),
+            ),
+            const SizedBox(height: 6),
+            Text(
+              'Location: ${widget.report.location}',
+              style: const TextStyle(fontSize: 12, color: Colors.black54),
+            ),
+            const SizedBox(height: 16),
+            const Text(
+              'Select Assigned Worker / Vehicle Crew *',
+              style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
+            ),
+            const SizedBox(height: 8),
+            if (_isLoading) ...[
+              const Padding(
+                padding: EdgeInsets.symmetric(vertical: 24),
+                child: Center(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      SizedBox(
+                        width: 28,
+                        height: 28,
+                        child: CircularProgressIndicator(strokeWidth: 2.5),
+                      ),
+                      SizedBox(height: 12),
+                      Text(
+                        'Loading available field workers...',
+                        style: TextStyle(fontSize: 12, color: Colors.black54),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ] else if (_errorMessage != null) ...[
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: Colors.red.shade50,
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: Colors.red.shade200),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Icon(Icons.error_outline,
+                            color: Colors.red.shade700, size: 20),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Text(
+                            'Failed to load workers',
+                            style: TextStyle(
+                              fontSize: 13,
+                              fontWeight: FontWeight.bold,
+                              color: Colors.red.shade900,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 6),
+                    Text(
+                      _errorMessage!,
+                      style:
+                          TextStyle(fontSize: 12, color: Colors.red.shade800),
+                    ),
+                    const SizedBox(height: 10),
+                    Align(
+                      alignment: Alignment.centerRight,
+                      child: TextButton.icon(
+                        key: const Key('admin_assign_retry_button'),
+                        onPressed: _loadWorkers,
+                        icon: const Icon(Icons.refresh, size: 16),
+                        label: const Text('Retry'),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ] else if (_workers.isEmpty) ...[
+              Container(
+                key: const Key('admin_assign_empty_warning'),
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: Colors.orange.shade50,
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: Colors.orange.shade200),
+                ),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Icon(Icons.warning_amber_rounded,
+                        color: Colors.orange.shade800, size: 22),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            'No Registered Field Workers',
+                            style: TextStyle(
+                              fontSize: 13,
+                              fontWeight: FontWeight.bold,
+                              color: Colors.orange.shade900,
+                            ),
+                          ),
+                          const SizedBox(height: 4),
+                          Text(
+                            'No active field worker profiles were found in the municipal database. Please ensure worker accounts are provisioned before dispatching tasks.',
+                            style: TextStyle(
+                                fontSize: 12, color: Colors.orange.shade900),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ] else ...[
+              DropdownButtonFormField<String>(
+                key: const Key('admin_assign_worker_dropdown'),
+                initialValue: _selectedWorkerId,
+                decoration: const InputDecoration(
+                  prefixIcon: Icon(Icons.person_pin_outlined),
+                  contentPadding: EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 10,
+                  ),
+                ),
+                items: _workers.map((w) {
+                  return DropdownMenuItem<String>(
+                    value: w.uid,
+                    child: Text(
+                      w.displayName,
+                      style: const TextStyle(fontSize: 13),
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  );
+                }).toList(),
+                onChanged: (val) {
+                  if (val != null) {
+                    setState(() => _selectedWorkerId = val);
+                  }
+                },
+              ),
+            ],
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context, null),
+          child: const Text('Cancel'),
+        ),
+        ElevatedButton(
+          key: const Key('admin_assign_confirm_button'),
+          onPressed:
+              (_isLoading || _errorMessage != null || _selectedWorkerId == null)
+                  ? null
+                  : () {
+                      final chosenWorker = _workers.firstWhere(
+                        (w) => w.uid == _selectedWorkerId,
+                      );
+                      Navigator.pop(context, chosenWorker);
+                    },
+          child: const Text('Confirm Dispatch'),
+        ),
+      ],
     );
   }
 }

@@ -5,7 +5,7 @@ import 'core/theme/app_theme.dart';
 import 'models/app_user.dart';
 import 'repositories/waste_report_repository.dart';
 import 'services/auth_service.dart';
-import 'features/auth/login_screen.dart';
+import 'features/auth/role_selection_screen.dart';
 import 'features/resident/resident_dashboard.dart';
 import 'features/resident/resident_reports_screen.dart';
 import 'features/resident/report_waste_dialog.dart';
@@ -66,20 +66,42 @@ class _SmartWasteAppState extends State<SmartWasteApp> {
       listenable: _authService,
       builder: (context, _) {
         final repository = _activeRepository;
+
+        final Widget homeWidget;
+        if (_authService.isVerifyingRestoredSession) {
+          homeWidget = const Scaffold(
+            body: Center(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  CircularProgressIndicator(),
+                  SizedBox(height: 16),
+                  Text(
+                    'Verifying EcoCollect session...',
+                    style: TextStyle(fontSize: 14, color: Colors.black54),
+                  ),
+                ],
+              ),
+            ),
+          );
+        } else if (_authService.isAuthenticated) {
+          homeWidget = MainNavigationShell(
+            user: _authService.currentUser!,
+            authService: _authService,
+            repository: repository,
+          );
+        } else {
+          homeWidget = RoleSelectionScreen(
+            authService: _authService,
+            onAuthenticated: () => setState(() {}),
+          );
+        }
+
         return MaterialApp(
           title: 'Smart Waste Collection Manager',
           debugShowCheckedModeBanner: false,
           theme: AppTheme.lightTheme,
-          home: _authService.isAuthenticated
-              ? MainNavigationShell(
-                  user: _authService.currentUser!,
-                  authService: _authService,
-                  repository: repository,
-                )
-              : LoginScreen(
-                  authService: _authService,
-                  onAuthenticated: () => setState(() {}),
-                ),
+          home: homeWidget,
         );
       },
     );
@@ -144,7 +166,11 @@ class _MainNavigationShellState extends State<MainNavigationShell> {
     } else if (user.isAdmin) {
       pages = [
         AdminDashboard(user: user, repository: widget.repository),
-        ResidentReportsScreen(user: user, repository: widget.repository),
+        ResidentReportsScreen(
+          user: user,
+          repository: widget.repository,
+          showAllReports: true,
+        ),
         const EcoTipsScreen(),
         ProfileScreen(
           user: user,
@@ -285,11 +311,11 @@ class _MainNavigationShellState extends State<MainNavigationShell> {
             icon: const Icon(Icons.notifications_none),
             onPressed: () {
               ScaffoldMessenger.of(context).showSnackBar(
-                SnackBar(
+                const SnackBar(
                   content: Text(
                     'Notifications: All systems operational in sector 2.',
                   ),
-                  duration: const Duration(seconds: 2),
+                  duration: Duration(seconds: 2),
                 ),
               );
             },
@@ -333,6 +359,7 @@ class _MainNavigationShellState extends State<MainNavigationShell> {
       floatingActionButton:
           user.isResident && (currentIndex == 0 || currentIndex == 1)
           ? FloatingActionButton.extended(
+              heroTag: 'main_shell_report_fab',
               onPressed: () => ReportWasteDialog.show(
                 context,
                 user: user,

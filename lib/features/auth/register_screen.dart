@@ -42,7 +42,9 @@ class _RegisterScreenState extends State<RegisterScreen> {
     );
 
     if (success && mounted) {
-      Navigator.pop(context); // Pop register screen
+      if (Navigator.of(context).canPop()) {
+        Navigator.of(context).pop(true); // Pop register screen with success signal
+      }
       widget.onAuthenticated();
     } else if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(

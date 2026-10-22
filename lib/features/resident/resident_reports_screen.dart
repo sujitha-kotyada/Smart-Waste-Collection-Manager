@@ -10,11 +10,13 @@ import 'report_detail_sheet.dart';
 class ResidentReportsScreen extends StatefulWidget {
   final AppUser user;
   final WasteReportRepository repository;
+  final bool showAllReports;
 
   const ResidentReportsScreen({
     super.key,
     required this.user,
     required this.repository,
+    this.showAllReports = false,
   });
 
   @override
@@ -31,8 +33,52 @@ class _ResidentReportsScreenState extends State<ResidentReportsScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       body: StreamBuilder<List<WasteReport>>(
-        stream: widget.repository.streamUserReports(widget.user.uid),
+        stream: widget.showAllReports
+            ? widget.repository.streamAllReports()
+            : widget.repository.streamUserReports(widget.user.uid),
         builder: (context, snapshot) {
+          if (snapshot.connectionState == ConnectionState.waiting &&
+              !snapshot.hasData) {
+            return const Center(
+              child: CircularProgressIndicator(),
+            );
+          }
+
+          if (snapshot.hasError) {
+            return Center(
+              child: Padding(
+                padding: const EdgeInsets.all(24.0),
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    const Icon(
+                      Icons.error_outline,
+                      size: 48,
+                      color: Colors.redAccent,
+                    ),
+                    const SizedBox(height: 12),
+                    const Text(
+                      'Failed to load reports',
+                      style: TextStyle(
+                        fontWeight: FontWeight.bold,
+                        fontSize: 16,
+                      ),
+                    ),
+                    const SizedBox(height: 6),
+                    Text(
+                      snapshot.error.toString(),
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(
+                        fontSize: 13,
+                        color: Colors.black54,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            );
+          }
+
           final allReports = snapshot.data ?? [];
 
           // Filter by status

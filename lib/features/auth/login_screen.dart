@@ -6,11 +6,15 @@ import 'register_screen.dart';
 class LoginScreen extends StatefulWidget {
   final AuthService authService;
   final VoidCallback onAuthenticated;
+  final String selectedRole;
+  final VoidCallback? onBackToRoleSelection;
 
   const LoginScreen({
     super.key,
     required this.authService,
     required this.onAuthenticated,
+    this.selectedRole = AppConstants.roleResident,
+    this.onBackToRoleSelection,
   });
 
   @override
@@ -30,18 +34,33 @@ class _LoginScreenState extends State<LoginScreen> {
     super.dispose();
   }
 
+  void _handleBack() {
+    if (widget.onBackToRoleSelection != null) {
+      widget.onBackToRoleSelection!();
+    } else if (Navigator.canPop(context)) {
+      Navigator.pop(context);
+    }
+  }
+
   Future<void> _handleLogin() async {
     if (!_formKey.currentState!.validate()) return;
+
+    final navigator = Navigator.of(context);
+    final scaffoldMessenger = ScaffoldMessenger.of(context);
 
     final success = await widget.authService.signInWithEmailPassword(
       email: _emailController.text,
       password: _passwordController.text,
+      expectedRole: widget.selectedRole,
     );
 
     if (success && mounted) {
+      if (navigator.canPop()) {
+        navigator.pop();
+      }
       widget.onAuthenticated();
     } else if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
+      scaffoldMessenger.showSnackBar(
         SnackBar(
           backgroundColor: Colors.redAccent,
           content: Text(
@@ -54,6 +73,9 @@ class _LoginScreenState extends State<LoginScreen> {
 
   void _demoLogin(String role) {
     widget.authService.enterDemoMode(role);
+    if (mounted && Navigator.of(context).canPop()) {
+      Navigator.of(context).pop();
+    }
     widget.onAuthenticated();
   }
 
@@ -118,12 +140,46 @@ class _LoginScreenState extends State<LoginScreen> {
     );
   }
 
+  String _portalTitle(String role) {
+    switch (role) {
+      case AppConstants.roleAdmin:
+        return 'Municipal Admin Portal';
+      case AppConstants.roleWorker:
+        return 'Field Operations Portal';
+      case AppConstants.roleResident:
+      default:
+        return 'Resident Portal';
+    }
+  }
+
+  String _portalSubtitle(String role) {
+    switch (role) {
+      case AppConstants.roleAdmin:
+        return 'Sign in with authorized municipal administration credentials.';
+      case AppConstants.roleWorker:
+        return 'Sign in with assigned field crew credentials.';
+      case AppConstants.roleResident:
+      default:
+        return 'Sign in to log waste incidents, track requests, and earn badges.';
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
+    final isResident = widget.selectedRole == AppConstants.roleResident;
+
     return Scaffold(
+      appBar: AppBar(
+        leading: IconButton(
+          icon: const Icon(Icons.arrow_back),
+          tooltip: 'Change role',
+          onPressed: _handleBack,
+        ),
+        title: Text(_portalTitle(widget.selectedRole)),
+      ),
       body: Center(
         child: SingleChildScrollView(
-          padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 32),
+          padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 24),
           child: ConstrainedBox(
             constraints: const BoxConstraints(maxWidth: 440),
             child: Form(
@@ -147,7 +203,7 @@ class _LoginScreenState extends State<LoginScreen> {
                       ),
                     ),
                   ),
-                  const SizedBox(height: 16),
+                  const SizedBox(height: 14),
                   const Text(
                     'EcoCollect',
                     textAlign: TextAlign.center,
@@ -159,12 +215,22 @@ class _LoginScreenState extends State<LoginScreen> {
                     ),
                   ),
                   const SizedBox(height: 4),
-                  const Text(
-                    'Smart Waste Collection & Urban Sustainability',
+                  Text(
+                    _portalTitle(widget.selectedRole),
                     textAlign: TextAlign.center,
-                    style: TextStyle(fontSize: 13, color: Colors.black54),
+                    style: const TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w600,
+                      color: Colors.black87,
+                    ),
                   ),
-                  const SizedBox(height: 32),
+                  const SizedBox(height: 2),
+                  Text(
+                    _portalSubtitle(widget.selectedRole),
+                    textAlign: TextAlign.center,
+                    style: const TextStyle(fontSize: 12, color: Colors.black54),
+                  ),
+                  const SizedBox(height: 24),
 
                   // Login Form Card
                   Card(
@@ -252,49 +318,101 @@ class _LoginScreenState extends State<LoginScreen> {
                                     height: 20,
                                     width: 20,
                                     child: CircularProgressIndicator(
-                                      color: Colors.white,
                                       strokeWidth: 2,
+                                      color: Colors.white,
                                     ),
                                   )
                                 : const Text('Sign In'),
+                          ),
+                          const SizedBox(height: 16),
+
+                          // Registration Option (Resident Only) vs Staff Notice (Worker/Admin)
+                          if (isResident) ...[
+                            Wrap(
+                              alignment: WrapAlignment.center,
+                              crossAxisAlignment: WrapCrossAlignment.center,
+                              children: [
+                                const Text(
+                                  "Don't have an account? ",
+                                  style: TextStyle(fontSize: 13),
+                                ),
+                                TextButton(
+                                  onPressed: () async {
+                                    final navigator = Navigator.of(context);
+                                    final registered =
+                                        await navigator.push<bool>(
+                                      MaterialPageRoute(
+                                        builder: (_) => RegisterScreen(
+                                          authService: widget.authService,
+                                          onAuthenticated:
+                                              widget.onAuthenticated,
+                                        ),
+                                      ),
+                                    );
+                                    if (!mounted) return;
+                                    if (registered == true ||
+                                        widget.authService.isAuthenticated) {
+                                      if (navigator.canPop()) {
+                                        navigator.pop();
+                                      }
+                                    }
+                                  },
+                                  child: const Text('Register'),
+                                ),
+                              ],
+                            ),
+                          ] else ...[
+                            Container(
+                              padding: const EdgeInsets.all(12),
+                              decoration: BoxDecoration(
+                                color: const Color(0xFFF5F5F5),
+                                borderRadius: BorderRadius.circular(10),
+                                border: Border.all(color: Colors.black12),
+                              ),
+                              child: const Row(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Icon(
+                                    Icons.shield_outlined,
+                                    size: 16,
+                                    color: Colors.black54,
+                                  ),
+                                  SizedBox(width: 8),
+                                  Expanded(
+                                    child: Text(
+                                      'Staff and administrator accounts are provisioned exclusively by municipal IT administration. Self-registration is disabled for privileged portals.',
+                                      style: TextStyle(
+                                        fontSize: 11,
+                                        color: Colors.black87,
+                                        height: 1.3,
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ],
+                          const SizedBox(height: 8),
+
+                          // Change Role Link
+                          Center(
+                            child: TextButton.icon(
+                              onPressed: _handleBack,
+                              icon: const Icon(Icons.swap_horiz, size: 16),
+                              label: const Text(
+                                'Change role',
+                                style: TextStyle(fontSize: 12),
+                              ),
+                            ),
                           ),
                         ],
                       ),
                     ),
                   ),
-                  const SizedBox(height: 16),
 
-                  // Register Link
-                  Wrap(
-                    alignment: WrapAlignment.center,
-                    crossAxisAlignment: WrapCrossAlignment.center,
-                    children: [
-                      const Text(
-                        "Don't have an account? ",
-                        style: TextStyle(fontSize: 13, color: Colors.black54),
-                      ),
-                      TextButton(
-                        onPressed: () {
-                          Navigator.push(
-                            context,
-                            MaterialPageRoute(
-                              builder: (_) => RegisterScreen(
-                                authService: widget.authService,
-                                onAuthenticated: widget.onAuthenticated,
-                              ),
-                            ),
-                          );
-                        },
-                        child: const Text(
-                          'Register as Resident',
-                          style: TextStyle(fontWeight: FontWeight.bold),
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 20),
+                  const SizedBox(height: 24),
 
-                  // College Evaluator Fast Access
+                  // Demo Sandbox Section (Isolated in-memory simulation)
                   Container(
                     padding: const EdgeInsets.all(16),
                     decoration: BoxDecoration(
@@ -315,7 +433,7 @@ class _LoginScreenState extends State<LoginScreen> {
                             SizedBox(width: 8),
                             Expanded(
                               child: Text(
-                                'Evaluator Fast-Access (Simulated Sandbox)',
+                                'Demo Sandbox — Offline Simulation',
                                 style: TextStyle(
                                   fontWeight: FontWeight.bold,
                                   fontSize: 13,
@@ -327,7 +445,7 @@ class _LoginScreenState extends State<LoginScreen> {
                         ),
                         const SizedBox(height: 6),
                         const Text(
-                          'Preview any role in an isolated in-memory sandbox without credentials. Live cloud operations require real email login above.',
+                          'Preview any persona in an isolated offline sandbox without credentials. Simulated data is strictly local and does not represent live municipal records or database changes.',
                           style: TextStyle(fontSize: 11, color: Colors.black54),
                         ),
                         const SizedBox(height: 12),
