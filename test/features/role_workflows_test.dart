@@ -3,6 +3,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:smart_waste_collection_manager/core/constants/app_constants.dart';
 import 'package:smart_waste_collection_manager/main.dart';
 import 'package:smart_waste_collection_manager/models/app_user.dart';
+import 'package:smart_waste_collection_manager/models/waste_report.dart';
 import 'package:smart_waste_collection_manager/repositories/waste_report_repository.dart';
 import 'package:smart_waste_collection_manager/services/auth_service.dart';
 
@@ -122,5 +123,122 @@ void main() {
       expect(find.text('Reports'), findsOneWidget);
       expect(find.text('Pending'), findsOneWidget);
     });
+
+    testWidgets(
+      'Admin navigating to All Reports tab sees reports submitted by other users',
+      (WidgetTester tester) async {
+        final adminUser = AppUser(
+          uid: 'admin-unique-uid-999',
+          email: 'admin.super@ecocollect.org',
+          displayName: 'Municipal Admin Super',
+          role: AppConstants.roleAdmin,
+          createdAt: DateTime.now(),
+        );
+
+        final citizenReport = WasteReport(
+          id: 'CITIZEN-777',
+          reporterId: 'citizen-resident-42',
+          reporterName: 'Sunita Citizen',
+          wasteCategory: 'Plastic Waste',
+          location: 'Gandhi Road Corner Sector 12',
+          description: 'Large pile of plastic bottles and packaging',
+          priority: 'High',
+          status: AppConstants.statusPending,
+          createdAt: DateTime.now(),
+          updatedAt: DateTime.now(),
+        );
+        await repository.createReport(citizenReport);
+
+        await tester.pumpWidget(
+          MaterialApp(
+            home: Scaffold(
+              body: MainNavigationShell(
+                user: adminUser,
+                authService: authService,
+                repository: repository,
+              ),
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+
+        // Tap on "All Reports" navigation destination in the Admin bar
+        final allReportsTab = find.text('All Reports');
+        expect(allReportsTab, findsOneWidget);
+        await tester.tap(allReportsTab);
+        await tester.pumpAndSettle();
+
+        // Confirm that the report submitted by citizen-resident-42 is displayed
+        expect(find.text('Gandhi Road Corner Sector 12'), findsOneWidget);
+        expect(find.text('ID: #CITIZEN-777'), findsOneWidget);
+        expect(find.text('No matching reports'), findsNothing);
+        expect(find.text('0 reports found'), findsNothing);
+      },
+    );
+
+    testWidgets(
+      'Resident navigating to My Reports tab sees only their own reports',
+      (WidgetTester tester) async {
+        final residentUser = AppUser(
+          uid: 'resident-self-uid',
+          email: 'resident.self@ecocollect.org',
+          displayName: 'Self Resident',
+          role: AppConstants.roleResident,
+          createdAt: DateTime.now(),
+        );
+
+        final selfReport = WasteReport(
+          id: 'SELF-101',
+          reporterId: 'resident-self-uid',
+          reporterName: 'Self Resident',
+          wasteCategory: 'Plastic Waste',
+          location: '101 Rose Lane Front Gate',
+          description: 'Recyclable milk pouches',
+          priority: 'Medium',
+          status: AppConstants.statusPending,
+          createdAt: DateTime.now(),
+          updatedAt: DateTime.now(),
+        );
+
+        final otherReport = WasteReport(
+          id: 'OTHER-202',
+          reporterId: 'other-resident-99',
+          reporterName: 'Other Resident',
+          wasteCategory: 'E-Waste',
+          location: '99 Boulevard Plaza Secret',
+          description: 'Broken printer and cables',
+          priority: 'Low',
+          status: AppConstants.statusPending,
+          createdAt: DateTime.now(),
+          updatedAt: DateTime.now(),
+        );
+
+        await repository.createReport(selfReport);
+        await repository.createReport(otherReport);
+
+        await tester.pumpWidget(
+          MaterialApp(
+            home: Scaffold(
+              body: MainNavigationShell(
+                user: residentUser,
+                authService: authService,
+                repository: repository,
+              ),
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+
+        // Tap on "Reports" navigation destination in the Resident bar
+        final reportsTab = find.text('Reports');
+        expect(reportsTab, findsOneWidget);
+        await tester.tap(reportsTab);
+        await tester.pumpAndSettle();
+
+        // Resident sees their own report, but NOT the other resident's report
+        expect(find.text('101 Rose Lane Front Gate'), findsOneWidget);
+        expect(find.text('99 Boulevard Plaza Secret'), findsNothing);
+      },
+    );
   });
 }

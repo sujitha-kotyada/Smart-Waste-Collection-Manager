@@ -7,7 +7,7 @@ import 'package:smart_waste_collection_manager/services/auth_service.dart';
 
 void main() {
   testWidgets(
-    'Unauthenticated user sees Login screen and not resident dashboard',
+    'Unauthenticated user lands on Role Selection screen and not resident dashboard',
     (WidgetTester tester) async {
       tester.view.physicalSize = const Size(1200, 900);
       tester.view.devicePixelRatio = 1.0;
@@ -18,10 +18,13 @@ void main() {
       await tester.pumpWidget(SmartWasteApp(authService: authService));
       await tester.pumpAndSettle();
 
-      // Verify unauthenticated user lands on Login Screen
-      expect(find.text('Sign In'), findsWidgets);
+      // Verify unauthenticated user lands on Portal Selection Screen
+      expect(find.text('Select Your Portal'), findsOneWidget);
+      expect(find.text('Resident Portal'), findsOneWidget);
+      expect(find.text('Field Operations Portal'), findsOneWidget);
+      expect(find.text('Municipal Governance Portal'), findsOneWidget);
       expect(
-        find.text('Evaluator Fast-Access (Simulated Sandbox)'),
+        find.text('Demo Sandbox — Offline Simulation'),
         findsOneWidget,
       );
       // Should NOT show resident dashboard without authentication

@@ -66,5 +66,20 @@ void main() {
       final cloudRepo = FirestoreWasteReportRepository();
       expect(cloudRepo.isUsingCloudFirestore, isTrue);
     });
+
+    test(
+      'LocalWasteReportRepository returns available worker profiles with valid fields',
+      () async {
+        final workers = await repository.getAvailableWorkers();
+        expect(workers.isNotEmpty, isTrue);
+        for (final worker in workers) {
+          expect(worker.uid.isNotEmpty, isTrue);
+          expect(worker.email.isNotEmpty, isTrue);
+          expect(worker.displayName.isNotEmpty, isTrue);
+          expect(worker.role, AppConstants.roleWorker);
+          expect(worker.isWorker, isTrue);
+        }
+      },
+    );
   });
 }
