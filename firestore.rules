@@ -11,18 +11,58 @@ service cloud.firestore {
       return isAuthenticated() && request.auth.uid == userId;
     }
 
-    // Role verification from custom claims (tamper-proof) OR protected /users/{uid} doc
-    function hasRole(roleName) {
-      return isAuthenticated() && (
-        ('role' in request.auth.token && request.auth.token.role == roleName) ||
-        (roleName == 'admin' && 'admin' in request.auth.token && request.auth.token.admin == true) ||
-        (roleName == 'worker' && 'worker' in request.auth.token && request.auth.token.worker == true) ||
-        (
-          exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
-          'role' in get(/databases/$(database)/documents/users/$(request.auth.uid)).data &&
-          get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == roleName
-        )
+    // Role-related claim validation: ensures recognized claims are well-typed and mutually consistent
+    function hasInvalidRoleClaims() {
+      return (
+        // 1. Type validation: recognized claims must have valid types and allowable values
+        ('role' in request.auth.token && (!(request.auth.token.role is string) || !(request.auth.token.role in ['resident', 'worker', 'admin']))) ||
+        ('admin' in request.auth.token && !(request.auth.token.admin is bool)) ||
+        ('worker' in request.auth.token && !(request.auth.token.worker is bool)) ||
+
+        // 2. Mutual exclusivity of privileged boolean capability flags
+        ('admin' in request.auth.token && request.auth.token.admin == true &&
+         'worker' in request.auth.token && request.auth.token.worker == true) ||
+
+        // 3. Contradictions between role string and boolean flags
+        ('role' in request.auth.token && request.auth.token.role == 'admin' &&
+         (('admin' in request.auth.token && request.auth.token.admin == false) ||
+          ('worker' in request.auth.token && request.auth.token.worker == true))) ||
+
+        ('role' in request.auth.token && request.auth.token.role == 'worker' &&
+         (('worker' in request.auth.token && request.auth.token.worker == false) ||
+          ('admin' in request.auth.token && request.auth.token.admin == true))) ||
+
+        ('role' in request.auth.token && request.auth.token.role == 'resident' &&
+         (('admin' in request.auth.token && request.auth.token.admin == true) ||
+          ('worker' in request.auth.token && request.auth.token.worker == true)))
       );
+    }
+
+    // Verifies that asserted token claims (if any) do not contradict the checked role
+    function tokenDoesNotContradictRole(roleName) {
+      return (
+        (!('role' in request.auth.token) || request.auth.token.role == roleName) &&
+        (roleName != 'admin' ||
+         ((!('admin' in request.auth.token) || request.auth.token.admin == true) &&
+          (!('worker' in request.auth.token) || request.auth.token.worker != true))) &&
+        (roleName != 'worker' ||
+         ((!('worker' in request.auth.token) || request.auth.token.worker == true) &&
+          (!('admin' in request.auth.token) || request.auth.token.admin != true))) &&
+        (roleName != 'resident' ||
+         ((!('admin' in request.auth.token) || request.auth.token.admin != true) &&
+          (!('worker' in request.auth.token) || request.auth.token.worker != true)))
+      );
+    }
+
+    // Role verification strictly requiring a valid /users/{uid} document with matching role
+    // and ensuring no invalid, malformed, or contradictory token claims are asserted.
+    function hasRole(roleName) {
+      return isAuthenticated() &&
+        !hasInvalidRoleClaims() &&
+        tokenDoesNotContradictRole(roleName) &&
+        exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+        'role' in get(/databases/$(database)/documents/users/$(request.auth.uid)).data &&
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == roleName;
     }
 
     function isAdmin() {
@@ -31,6 +71,10 @@ service cloud.firestore {
 
     function isWorker() {
       return hasRole('worker');
+    }
+
+    function isResident() {
+      return hasRole('resident');
     }
 
     // Valid waste categories
@@ -97,8 +141,8 @@ service cloud.firestore {
     // 1. Users Collection (/users/{userId})
     // ==========================================
     match /users/{userId} {
-      // Any authenticated user can read profiles (needed for worker assignment display)
-      allow read: if isAuthenticated();
+      // Profile read access: users can only read their own profile; administrators can inspect all profiles
+      allow read: if isOwner(userId) || isAdmin();
 
       // Users can only create their own user document, strictly defaulting to 'resident'
       // Strictly enforces allowed keys, required types, and uid match
@@ -118,7 +162,7 @@ service cloud.firestore {
         request.resource.data.createdAt == resource.data.createdAt &&
         request.resource.data.role == resource.data.role &&
         request.resource.data.email == resource.data.email &&
-        request.resource.data.keys().hasOnly(['uid', 'email', 'displayName', 'role', 'createdAt']) &&
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly(['displayName']) &&
         (!('displayName' in request.resource.data) || request.resource.data.displayName is string);
 
       // Administrators can update roles, but identity (uid, createdAt, email) remains protected
